@@ -26,9 +26,7 @@ public class CryptoInvoicesApplication {
   public OpenAPI customOpenAPI() {
     return new OpenAPI()
         .servers(
-            Arrays.asList(
-                new Server().url("http://localhost:8080/").description("The dev server"),
-                new Server().url("https://invoice.payburner.com/").description("The prod server")))
+            Arrays.asList(new Server().url("http://localhost:8080/").description("The dev server")))
         .info(
             new Info()
                 .title("Crypto Invoices API")
