@@ -28,7 +28,9 @@ public class CryptoInvoicesApplication {
         .servers(
             Arrays.asList(
                 new Server().url("http://localhost:8080/").description("The dev server"),
-                new Server().url("http://invoices.iztcuintli.com/").description("The prod server")))
+                new Server()
+                    .url("http://invoices.iztcuintli.com:8080/")
+                    .description("The prod server")))
         .info(
             new Info()
                 .title("Crypto Invoices API")
