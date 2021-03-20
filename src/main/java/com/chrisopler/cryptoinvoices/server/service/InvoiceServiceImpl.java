@@ -1,5 +1,9 @@
 package com.chrisopler.cryptoinvoices.server.service;
 
+import static com.chrisopler.cryptoinvoices.server.generated.model.InvoiceStatus.EXPIRED;
+import static com.chrisopler.cryptoinvoices.server.generated.model.InvoiceStatus.PAID;
+import static com.chrisopler.cryptoinvoices.server.generated.model.InvoiceStatus.PARTIALLY_PAID;
+
 import com.chrisopler.cryptoinvoices.server.blockchain.BlockchainIntegration;
 import com.chrisopler.cryptoinvoices.server.blockchain.BlockchainIntegrationFactory;
 import com.chrisopler.cryptoinvoices.server.errors.BadRequestException;
@@ -31,6 +35,10 @@ public class InvoiceServiceImpl implements InvoiceService {
     this.blockchainIntegrationFactory = blockchainIntegrationFactory;
   }
 
+  /**
+   * Normally gets are not mutating. Future work includes adding a background scheduler to to
+   * perform expiration and paid status checks. As such this method would be a pure get.
+   */
   @Override
   public void getInvoice(String invoiceId, DeferredResult<Invoice> deferredResult)
       throws NotFoundException, UnknownIntegrationException, BadRequestException {
@@ -46,13 +54,12 @@ public class InvoiceServiceImpl implements InvoiceService {
     }
 
     if (isExpired(invoice)) {
-      /*
-       * Normally gets are not mutating. Future work includes adding a background scheduler to
-       * to perform expiration and paid status checks.  As such this method would be a pure get.
-       */
-      invoice.setInvoiceStatus(InvoiceStatus.EXPIRED);
-      this.invoiceRepository.save(invoice);
-      log.info("Invoice {} has expired", invoice.getInvoiceId());
+
+      if (invoice.getInvoiceStatus() != EXPIRED) {
+        invoice.setInvoiceStatus(InvoiceStatus.EXPIRED);
+        this.invoiceRepository.save(invoice);
+        log.info("Invoice {} has expired", invoice.getInvoiceId());
+      }
       deferredResult.setResult(invoice);
       return;
     }
@@ -65,14 +72,13 @@ public class InvoiceServiceImpl implements InvoiceService {
 
     invoice.setAmountPaid(toString(b, blockchainIntegration));
     setAmountRemaining(invoice, blockchainIntegration);
-    if (isPaid(invoice)) {
-      invoice.setInvoiceStatus(InvoiceStatus.PAID);
-
+    if (isPaid(invoice) && invoice.getInvoiceStatus() != PAID) {
+      invoice.setInvoiceStatus(PAID);
       this.invoiceRepository.save(invoice);
       log.info("Invoice {} has been paid", invoice.getInvoiceId());
       deferredResult.setResult(invoice);
-    } else if (isPartiallyPaid(invoice)) {
-      invoice.setInvoiceStatus(InvoiceStatus.PARTIALLY_PAID);
+    } else if (isPartiallyPaid(invoice) && invoice.getInvoiceStatus() != PARTIALLY_PAID) {
+      invoice.setInvoiceStatus(PARTIALLY_PAID);
       this.invoiceRepository.save(invoice);
       log.info(
           "Invoice {} has been partially paid.  Current amount paid {} {}",
@@ -81,7 +87,6 @@ public class InvoiceServiceImpl implements InvoiceService {
           invoice.getCurrency());
       deferredResult.setResult(invoice);
     } else {
-      // this shouldn't happen
       deferredResult.setResult(invoice);
     }
   }

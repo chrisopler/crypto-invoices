@@ -26,7 +26,9 @@ public class CryptoInvoicesApplication {
   public OpenAPI customOpenAPI() {
     return new OpenAPI()
         .servers(
-            Arrays.asList(new Server().url("http://localhost:8080/").description("The dev server")))
+            Arrays.asList(
+                new Server().url("http://localhost:8080/").description("The dev server"),
+                new Server().url("http://invoices.iztcuintli.com/").description("The prod server")))
         .info(
             new Info()
                 .title("Crypto Invoices API")

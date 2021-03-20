@@ -233,6 +233,7 @@ class CryptoInvoicesApplicationTests {
             });
   }
 
+  /** NOTE: The send payment can be flaky causing tests to fail. Just re-run. */
   private void sendPayment(
       Wallet wallet, String sendingAddress, String destinationAddress, BigDecimal amount)
       throws JsonRpcClientErrorException {
@@ -254,13 +255,7 @@ class CryptoInvoicesApplicationTests {
     SubmitResult<Payment> result = xrplClient.submit(wallet, payment);
 
     List<String> goodEngineResult = Arrays.asList("tesSUCCESS", "terQUEUED");
-    System.out.println(
-        "PAYMENT RESULT -- Accepted:"
-            + result.accepted()
-            + ", Status:"
-            + result.status()
-            + ", EngineResult:"
-            + result.engineResult());
+
     assert (result.accepted()
         && result.status().isPresent()
         && result.status().get().equals("success")
