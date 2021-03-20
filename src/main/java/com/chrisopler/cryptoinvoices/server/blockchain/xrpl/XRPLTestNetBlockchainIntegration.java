@@ -14,6 +14,7 @@ import org.xrpl.xrpl4j.model.client.accounts.AccountInfoResult;
 import org.xrpl.xrpl4j.model.transactions.Address;
 import reactor.core.publisher.Mono;
 
+/** The XRP Ledger TESTNET blockchain integration */
 @Component
 public class XRPLTestNetBlockchainIntegration implements BlockchainIntegration {
 
@@ -39,6 +40,9 @@ public class XRPLTestNetBlockchainIntegration implements BlockchainIntegration {
           xrplClient.accountInfo(
               AccountInfoRequestParams.builder().account(Address.of(cryptoAddress)).build());
 
+      // -- adjust the balance returned from the XRPL:
+      //    1/ is in drops, which is 1/1000000 of an XRP.
+      //    2/ test faucet accounts contain an initial 1000 XRP
       return BigDecimal.valueOf(
           (result.accountData().balance().value().longValue() / DROPS_PER_XRP)
               - INITIAL_FAUCET_AMOUNT);
@@ -59,6 +63,7 @@ public class XRPLTestNetBlockchainIntegration implements BlockchainIntegration {
 
   @Override
   public Mono<String> createNewCryptoAddress() {
+    // -- call the test faucet to create a new account.
     return WebClient.create()
         .post()
         .uri(CREATE_FAUCET_ENDPOINT)

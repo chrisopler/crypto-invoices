@@ -49,47 +49,61 @@ class CryptoInvoicesApplicationTests {
 
     InvoiceCreateRequest request = goodRequest();
 
+    // -- create an invoice
     ResponseEntity<Invoice> createResult = createInvoice(request);
     assertEquals(200, createResult.getStatusCodeValue());
     assertEquals(InvoiceStatus.NEW, createResult.getBody().getInvoiceStatus());
 
+    // -- expect th be able to fetch it.
     ResponseEntity<Invoice> getResult = getInvoice(createResult.getBody().getInvoiceId());
     assertEquals(200, createResult.getStatusCodeValue());
     assertEquals(createResult.getBody(), getResult.getBody());
   }
 
+  /**
+   * Validation tests.
+   *
+   * @throws Exception
+   */
   @Test
   public void validationTests() throws Exception {
+    // -- validate missing invoice amount
     {
       InvoiceCreateRequest request = goodRequest();
       request.setInvoiceAmount(null);
       badRequest(request);
     }
+    // -- validate missing currency
     {
       InvoiceCreateRequest request = goodRequest();
       request.setCurrency(null);
       badRequest(request);
     }
+    // -- validate due in seconds == 0
     {
       InvoiceCreateRequest request = goodRequest();
       request.setDueInSeconds(0);
       badRequest(request);
     }
+    // -- validate null chain
     {
       InvoiceCreateRequest request = goodRequest();
       request.setChain(null);
       badRequest(request);
     }
+    // -- validate negative amount
     {
       InvoiceCreateRequest request = goodRequest();
       request.setInvoiceAmount("-100");
       badRequest(request);
     }
+    // -- validate non-numeric amount
     {
       InvoiceCreateRequest request = goodRequest();
       request.setInvoiceAmount("shouldbeanumber");
       badRequest(request);
     }
+    // -- validate missing chain
     {
       InvoiceCreateRequest request = goodRequest();
       request.setChain("BTC");
@@ -99,25 +113,31 @@ class CryptoInvoicesApplicationTests {
 
   @Test
   public void testTimeout() throws Exception, JsonRpcClientErrorException {
+
+    // -- creating the paying wallet
     String testFaucet = "https://faucet.altnet.rippletest.net/accounts";
     ResponseEntity<CreateTestNetAddressResponse> payingAddress =
         restTemplate.postForEntity(testFaucet, "", CreateTestNetAddressResponse.class);
     assertEquals(200, payingAddress.getStatusCodeValue());
+    WalletFactory walletFactory = DefaultWalletFactory.getInstance();
+    Wallet payingWallet =
+        walletFactory.fromSeed(payingAddress.getBody().getAccount().getSecret(), true);
+
+    // -- create an invoice
     InvoiceCreateRequest request = goodRequest();
     request.setInvoiceAmount("100");
     request.setDueInSeconds(30);
     final ResponseEntity<Invoice> invoice = createInvoice(request);
     assertEquals(200, invoice.getStatusCodeValue());
 
-    WalletFactory walletFactory = DefaultWalletFactory.getInstance();
-    Wallet wallet = walletFactory.fromSeed(payingAddress.getBody().getAccount().getSecret(), true);
-
+    // -- send a partial payment
     sendPayment(
-        wallet,
+        payingWallet,
         payingAddress.getBody().getAccount().getClassicAddress(),
         invoice.getBody().getCryptoAddress(),
         new BigDecimal("10"));
 
+    // -- wait until the invoice is marked partially paid
     await()
         .atMost(10, TimeUnit.SECONDS)
         .pollInterval(500, TimeUnit.MILLISECONDS)
@@ -126,10 +146,14 @@ class CryptoInvoicesApplicationTests {
               ResponseEntity<Invoice> partiallyPaidInvoice =
                   getInvoice(invoice.getBody().getInvoiceId());
               return partiallyPaidInvoice
-                  .getBody()
-                  .getInvoiceStatus()
-                  .equals(InvoiceStatus.PARTIALLY_PAID);
+                      .getBody()
+                      .getInvoiceStatus()
+                      .equals(InvoiceStatus.PARTIALLY_PAID)
+                  && new BigDecimal(partiallyPaidInvoice.getBody().getAmountPaid())
+                          .compareTo(BigDecimal.TEN)
+                      == 0;
             });
+    // -- wait until the invoice has timed out
     await()
         .atMost(30, TimeUnit.SECONDS)
         .pollInterval(500, TimeUnit.MILLISECONDS)
@@ -143,24 +167,29 @@ class CryptoInvoicesApplicationTests {
 
   @Test
   public void endToEndTest() throws Exception, JsonRpcClientErrorException {
+
+    // -- create the paying wallet.
     String testFaucet = "https://faucet.altnet.rippletest.net/accounts";
     ResponseEntity<CreateTestNetAddressResponse> payingAddress =
         restTemplate.postForEntity(testFaucet, "", CreateTestNetAddressResponse.class);
     assertEquals(200, payingAddress.getStatusCodeValue());
+    WalletFactory walletFactory = DefaultWalletFactory.getInstance();
+    Wallet wallet = walletFactory.fromSeed(payingAddress.getBody().getAccount().getSecret(), true);
+
+    // -- create an invoice request
     InvoiceCreateRequest request = goodRequest();
     request.setInvoiceAmount("100");
     final ResponseEntity<Invoice> invoice = createInvoice(request);
     assertEquals(200, invoice.getStatusCodeValue());
 
-    WalletFactory walletFactory = DefaultWalletFactory.getInstance();
-    Wallet wallet = walletFactory.fromSeed(payingAddress.getBody().getAccount().getSecret(), true);
-
+    // -- send a partial payment
     sendPayment(
         wallet,
         payingAddress.getBody().getAccount().getClassicAddress(),
         invoice.getBody().getCryptoAddress(),
         new BigDecimal("10"));
 
+    // -- wait until the invoice is marked partially paid
     await()
         .atMost(10, TimeUnit.SECONDS)
         .pollInterval(500, TimeUnit.MILLISECONDS)
@@ -169,11 +198,18 @@ class CryptoInvoicesApplicationTests {
               ResponseEntity<Invoice> partiallyPaidInvoice =
                   getInvoice(invoice.getBody().getInvoiceId());
               return partiallyPaidInvoice
-                  .getBody()
-                  .getInvoiceStatus()
-                  .equals(InvoiceStatus.PARTIALLY_PAID);
+                      .getBody()
+                      .getInvoiceStatus()
+                      .equals(InvoiceStatus.PARTIALLY_PAID)
+                  && new BigDecimal(partiallyPaidInvoice.getBody().getAmountPaid())
+                          .compareTo(BigDecimal.TEN)
+                      == 0
+                  && new BigDecimal(partiallyPaidInvoice.getBody().getAmountRemaining())
+                          .compareTo(new BigDecimal("90"))
+                      == 0;
             });
 
+    // -- send the remaining amount
     sendPayment(
         wallet,
         payingAddress.getBody().getAccount().getClassicAddress(),
@@ -187,7 +223,13 @@ class CryptoInvoicesApplicationTests {
             () -> {
               ResponseEntity<Invoice> partiallyPaidInvoice =
                   getInvoice(invoice.getBody().getInvoiceId());
-              return partiallyPaidInvoice.getBody().getInvoiceStatus().equals(InvoiceStatus.PAID);
+              return partiallyPaidInvoice.getBody().getInvoiceStatus().equals(InvoiceStatus.PAID)
+                  && new BigDecimal(partiallyPaidInvoice.getBody().getAmountPaid())
+                          .compareTo(new BigDecimal("100"))
+                      == 0
+                  && new BigDecimal(partiallyPaidInvoice.getBody().getAmountRemaining())
+                          .compareTo(BigDecimal.ZERO)
+                      == 0;
             });
   }
 

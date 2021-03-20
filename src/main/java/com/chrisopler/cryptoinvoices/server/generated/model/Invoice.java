@@ -45,7 +45,7 @@ public class Invoice {
   @Schema(
       name = "invoice_amount",
       description = "The amount in the currency due.",
-      example = "34.000001",
+      example = "100.000000",
       required = true)
   private String invoiceAmount;
 
@@ -57,6 +57,15 @@ public class Invoice {
       example = "0.000000",
       required = true)
   private String amountPaid;
+
+  @JsonProperty("amount_remaining")
+  @Column(name = "amount_remaining", nullable = false)
+  @Schema(
+      name = "amount_remaining",
+      description = "The amount remaining to be paid",
+      example = "100.000000",
+      required = true)
+  private String amountRemaining;
 
   @JsonProperty("crypto_address")
   @Column(name = "crypto_address", nullable = false)

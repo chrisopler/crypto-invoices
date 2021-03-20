@@ -52,7 +52,7 @@ public class InvoiceController {
                     mediaType = "application/json",
                     schema = @Schema(implementation = ErrorResponse.class))),
       })
-  @GetMapping("invoices/{invoiceId}")
+  @GetMapping("/invoices/{invoiceId}")
   public DeferredResult<Invoice> getInvoice(final @PathVariable String invoiceId)
       throws NotFoundException, UnknownIntegrationException, BadRequestException {
     DeferredResult<Invoice> result = new DeferredResult<>();
@@ -88,7 +88,7 @@ public class InvoiceController {
                     mediaType = "application/json",
                     schema = @Schema(implementation = ErrorResponse.class))),
       })
-  @PostMapping(path = "invoices", consumes = MediaType.APPLICATION_JSON_VALUE)
+  @PostMapping(path = "/invoices", consumes = MediaType.APPLICATION_JSON_VALUE)
   public DeferredResult<Invoice> createInvoice(
       @org.springframework.web.bind.annotation.RequestBody
           final InvoiceCreateRequest invoiceCreateRequest)

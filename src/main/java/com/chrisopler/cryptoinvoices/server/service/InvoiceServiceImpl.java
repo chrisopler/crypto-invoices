@@ -12,10 +12,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.async.DeferredResult;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @Component
 public class InvoiceServiceImpl implements InvoiceService {
 
@@ -50,6 +52,7 @@ public class InvoiceServiceImpl implements InvoiceService {
        */
       invoice.setInvoiceStatus(InvoiceStatus.EXPIRED);
       this.invoiceRepository.save(invoice);
+      log.info("Invoice {} has expired", invoice.getInvoiceId());
       deferredResult.setResult(invoice);
       return;
     }
@@ -61,18 +64,99 @@ public class InvoiceServiceImpl implements InvoiceService {
     BigDecimal b = blockchainIntegration.getBalance(invoice.getCryptoAddress());
 
     invoice.setAmountPaid(toString(b, blockchainIntegration));
+    setAmountRemaining(invoice, blockchainIntegration);
     if (isPaid(invoice)) {
       invoice.setInvoiceStatus(InvoiceStatus.PAID);
+
       this.invoiceRepository.save(invoice);
+      log.info("Invoice {} has been paid", invoice.getInvoiceId());
       deferredResult.setResult(invoice);
     } else if (isPartiallyPaid(invoice)) {
       invoice.setInvoiceStatus(InvoiceStatus.PARTIALLY_PAID);
       this.invoiceRepository.save(invoice);
+      log.info(
+          "Invoice {} has been partially paid.  Current amount paid {} {}",
+          invoice.getInvoiceId(),
+          invoice.getAmountPaid(),
+          invoice.getCurrency());
       deferredResult.setResult(invoice);
     } else {
       // this shouldn't happen
       deferredResult.setResult(invoice);
     }
+  }
+
+  private void setAmountRemaining(Invoice invoice, BlockchainIntegration blockchainIntegration) {
+    BigDecimal amountRemaining =
+        new BigDecimal(invoice.getInvoiceAmount())
+            .subtract(new BigDecimal(invoice.getAmountPaid()));
+    if (amountRemaining.compareTo(BigDecimal.ZERO) < 0) {
+      invoice.setAmountRemaining(toString(BigDecimal.ZERO, blockchainIntegration));
+    } else {
+      invoice.setAmountRemaining(toString(amountRemaining, blockchainIntegration));
+    }
+  }
+
+  @Override
+  public void createInvoice(InvoiceCreateRequest request, DeferredResult<Invoice> deferredResult)
+      throws BadRequestException, UnknownIntegrationException {
+
+    // validate the create request
+    if (request.getChain() == null) {
+      throw new BadRequestException("Missing chain");
+    }
+    if (request.getInvoiceAmount() == null) {
+      throw new BadRequestException("Missing invoice_amount");
+    }
+    if (request.getCurrency() == null) {
+      throw new BadRequestException("Missing currency");
+    }
+    if (request.getDueInSeconds() <= 0) {
+      throw new BadRequestException("Missing or invalid due_in_seconds");
+    }
+    try {
+      if (new BigDecimal(request.getInvoiceAmount()).compareTo(BigDecimal.ZERO) <= 0) {
+        throw new BadRequestException("invoice_amount must be greater than zero");
+      }
+    } catch (NumberFormatException e) {
+      throw new BadRequestException("invoice_amount must be a numeric value");
+    }
+
+    // -- fetch the blockchain integration
+    BlockchainIntegration blockchainIntegration =
+        this.blockchainIntegrationFactory.getIntegration(
+            request.getChain(),
+            Optional.ofNullable(request.getChainEnvironment()).orElse("default"));
+
+    // -- create a new crypto address on the chain
+    Mono<String> cryptoAddress = blockchainIntegration.createNewCryptoAddress();
+    cryptoAddress
+        // -- I couldn't figure out how to trigger an exception properly
+        .doOnError((e) -> new BadRequestException(e.getMessage()))
+        .subscribe(
+            (a) -> {
+              // create and save the invoice.
+              Invoice invoice =
+                  this.invoiceRepository.save(
+                      Invoice.builder()
+                          .invoiceAmount(request.getInvoiceAmount())
+                          .invoiceStatus(InvoiceStatus.NEW)
+                          .amountRemaining(request.getInvoiceAmount())
+                          .amountPaid(
+                              BigDecimal.ZERO
+                                  .setScale(
+                                      blockchainIntegration.getDecimalPrecision(),
+                                      blockchainIntegration.getRoundingMode())
+                                  .toPlainString())
+                          .chain(request.getChain())
+                          .chainEnvironment(request.getChainEnvironment())
+                          .cryptoAddress(a)
+                          .dueDate(
+                              Instant.now().plus(request.getDueInSeconds(), ChronoUnit.SECONDS))
+                          .currency(request.getCurrency())
+                          .build());
+              deferredResult.setResult(invoice);
+            });
   }
 
   private String toString(BigDecimal amount, BlockchainIntegration blockchainIntegration) {
@@ -101,63 +185,5 @@ public class InvoiceServiceImpl implements InvoiceService {
                 .compareTo(new BigDecimal(invoice.getInvoiceAmount()))
             < 0
         && new BigDecimal(invoice.getAmountPaid()).compareTo(BigDecimal.ZERO) > 0;
-  }
-
-  @Override
-  public void createInvoice(InvoiceCreateRequest request, DeferredResult<Invoice> deferredResult)
-      throws BadRequestException, UnknownIntegrationException {
-
-    // let us validate
-    if (request.getChain() == null) {
-      throw new BadRequestException("Missing chain");
-    }
-    if (request.getInvoiceAmount() == null) {
-      throw new BadRequestException("Missing invoice_amount");
-    }
-    if (request.getCurrency() == null) {
-      throw new BadRequestException("Missing currency");
-    }
-    if (request.getDueInSeconds() <= 0) {
-      throw new BadRequestException("Missing or invalid due_in_seconds");
-    }
-    try {
-      if (new BigDecimal(request.getInvoiceAmount()).compareTo(BigDecimal.ZERO) <= 0) {
-        throw new BadRequestException("invoice_amount must be greater than zero");
-      }
-    } catch (NumberFormatException e) {
-      throw new BadRequestException("invoice_amount must be a numeric value");
-    }
-
-    BlockchainIntegration blockchainIntegration =
-        this.blockchainIntegrationFactory.getIntegration(
-            request.getChain(),
-            Optional.ofNullable(request.getChainEnvironment()).orElse("default"));
-
-    Mono<String> cryptoAddress = blockchainIntegration.createNewCryptoAddress();
-    cryptoAddress
-        // -- I couldn't figure out how to trigger an exception properly
-        .doOnError((e) -> new BadRequestException(e.getMessage()))
-        .subscribe(
-            (a) -> {
-              Invoice invoice =
-                  this.invoiceRepository.save(
-                      Invoice.builder()
-                          .invoiceAmount(request.getInvoiceAmount())
-                          .invoiceStatus(InvoiceStatus.NEW)
-                          .amountPaid(
-                              BigDecimal.ZERO
-                                  .setScale(
-                                      blockchainIntegration.getDecimalPrecision(),
-                                      blockchainIntegration.getRoundingMode())
-                                  .toPlainString())
-                          .chain(request.getChain())
-                          .chainEnvironment(request.getChainEnvironment())
-                          .cryptoAddress(a)
-                          .dueDate(
-                              Instant.now().plus(request.getDueInSeconds(), ChronoUnit.SECONDS))
-                          .currency(request.getCurrency())
-                          .build());
-              deferredResult.setResult(invoice);
-            });
   }
 }
